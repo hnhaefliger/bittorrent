@@ -3,7 +3,7 @@ import struct
 import time
 
 class Peer:
-    def __init__(self, info_hash, peer_id, ip, port):
+    def __init__(self, info_hash, peer_id, ip, port, n_pieces):
         self. info_hash = info_hash
         self.peer_id = peer_id
 
@@ -18,9 +18,20 @@ class Peer:
         self.ip = ip
         self.port = port
 
-    def try_to_get(self, piece):
-        self.send(struct.pack('4s1s', b'0x0001', b'0x2'))
-        self.send(struct.pack('4s1s', b'0x0001', b'0x2'))
+        self.n_pieces = n_pieces
+        self.has = 0b0
+
+    def try_to_get(self, index, begin, length):
+        if self.has & 0b1 << index:
+            self.send(struct.pack('4s1s', b'0x0001', b'0x2'))
+            self.am_interested = 1
+
+            if not(self.peer_choking):
+                self.send(struct.pack('4s1s', b'0x0001', b'0x1'))
+                self.am_choking = 0
+
+                self.send(struct.pack('4s1s4s4s4s', b'0x000d', b'0x6', index.to_bytes(4, 'big'), begin.to_bytes(4, 'big'), length.to_bytes(4, 'big')))
+                print(f'requested piece {index} from {self.ip}.')
 
     def mainloop(self):
         self.last_alive = time.time()
@@ -47,16 +58,22 @@ class Peer:
                         print(f'{self.ip} is not interested.')
 
                     elif data[1] == 4:
-                        print(f'{self.ip} has.')
+                        index = int.from_bytes(data[2], 'big')
+
+                        print(f'{self.ip} has piece {index}.')
+                        
+                        if index < self.n_pieces:
+                            self.has |= 0b1 << index
 
                     elif data[1] == 5:
-                        print(f'{self.ip} sent {len(data[2])} bytes.')
+                        print(f'{self.ip} sent a bitfield.')
 
-                    elif data[1] == 6:
-                        print(f'{self.ip} requested.')
+                        if len(data[2]) <= self.n_pieces:
+                            self.has |= int.from_bytes(data[2], 'big')
 
-                    elif data[1] == 5:
-                        print(f'{self.ip} sent data.')
+                        else:
+                            self.socket.close()
+                            exit()
 
                     elif data[1] == 6:
                         print(f'{self.ip} requested.')
@@ -68,6 +85,7 @@ class Peer:
                         print(f'{self.ip} cancelled.')
             
             if self.last_alive - time.time() > 2 * 60:
+                print(f'keep alive was sent to {self.ip}.')
                 self.send(struct.pack('4s', b'0x0000'))
                 self.last_alive = time.time()
 
