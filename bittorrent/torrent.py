@@ -26,6 +26,8 @@ class Torrent:
         self.uploaded = 0
         self.left = len(self.pieces) * self.piece_length
 
+        self.has = [[0 for j in range(int(self.piece_length / 2**14))] for i in range(len(self.pieces))]
+
         self.tracker = Tracker(data['announce'], self.info_hash, self.peer_id, 6969)
         
         self.peers = {}
@@ -37,6 +39,25 @@ class Torrent:
             data = bdecode(f.read())
 
         return Torrent(data)
+
+    def has_piece_callback(self, data):
+        (ip, index, begin, length) = data
+
+        print(f'{ip} has piece {index}')
+
+    def getting_piece_callback(self, data):
+        (ip, index, begin, length) = data
+
+        for peer in self.peers:
+            if peer != ip:
+                self.peers['peer'].cancel(index, begin, length)
+
+        print(f'{ip} is getting piece {index}')
+
+    def got_piece_callback(self, data):
+        (ip, index, begin, length, piece) = data
+
+        print(f'{id} got piece {index}')
 
     def peer_failure_callback(self, ip):
         try:
@@ -63,8 +84,38 @@ class Torrent:
                 self.threads[peer['ip']] = threading.Thread(target=self.peers[peer['ip']].mainloop, daemon=True)
                 self.threads[peer['ip']].start()
 
-        for peer in self.peers:
-            self.peers[peer].get(1, 1, 2**14)
-
         while True:
-            time.sleep(1)
+            for peer in self.peers:
+                status = self.peers[peer].status()
+
+                if status[0] == 'complete':
+                    print(f'{peer} got piece {status[1]}:{status[2]}:{status[3]}.')
+                    self.has[status[1]][int(status[2] / 2**14)] = 2
+                    self.peers[peer].clear()
+
+                elif status[0] == 'failed':
+                    print(f'{peer} failed to get piece {status[1]}:{status[2]}:{status[3]}.')
+                    self.has[status[1]][int(status[2] / 2**14)] = 0
+                    self.peers[peer].clear()
+
+                status = self.peers[peer].status()
+                b = False
+
+                if status[0] == 'idle':
+                    for j, piece in enumerate(self.has):
+                        subpieces = [i for i in range(int(self.piece_length / 2**14)) if piece[i] == 0]
+
+                        for subpiece in subpieces:
+                            if self.peers[peer].get(j, subpiece*(2**14), 2**14):
+                                print(f'piece {j}:{subpiece*(2**14)}:{2**14} was assigned to {peer}.')
+                                self.has[j][subpiece] = 1
+
+                                b = True
+                            
+                            if b: break
+
+                        if b: break
+
+                
+
+                

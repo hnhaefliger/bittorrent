@@ -19,7 +19,7 @@ class Peer:
         self.n_pieces = n_pieces
         self.has = 0b0
 
-        self.seeking = (0, 0, 0, 0, lambda x: 0, lambda x: 0, lambda x: 0)
+        self.seeking = ('idle', 0, 0, 0, None)
 
         self.termination_callback = termination_callback
 
@@ -39,7 +39,7 @@ class Peer:
                     elif data[1] == 5: self.bitfield(data[2])
                     elif data[1] == 6: self.requested_piece(data[2])
                     elif data[1] == 7: self.receive_piece(data[2])
-                    elif data[1] == 8: self.cancel(data[2])
+                    elif data[1] == 8: self.cancel_request(data[2])
             
             self.keepalive()
 
@@ -99,17 +99,19 @@ class Peer:
         self.peer_choking = 1
         print(f'{self.ip} has started choking.')
 
+        if self.seeking[0] == 'interested' or self.seeking[0] == 'waiting':
+            self.send(messages.pack_uninterested())
+            self.seeking = ('failed', self.seeking[1], self.seeking[2], self.seeking[3], None)
+
     def stop_choking(self):
         self.peer_choking = 0
         print(f'{self.ip} has stopped choking.')
 
-        if self.seeking[0] == 1:
+        if self.seeking[0] == 'interested':
             if self.send(messages.pack_request(self.seeking[1], self.seeking[2], self.seeking[3])):
-                print(f'requested piece {self.seeking[1]} from {self.ip}.')
-
-                self.seeking[5]((self.ip, self.seeking[1], self.seeking[2], self.seeking[3]))
-
-                self.seeking = (2, self.seeking[1], self.seeking[2], self.seeking[3], self.seeking[4], self.seeking[5], self.seeking[6])
+                print(f'requested piece {self.seeking[1]}:{self.seeking[2]}:{self.seeking[3]} from {self.ip}.')
+                
+                self.seeking = ('waiting', self.seeking[1], self.seeking[2], self.seeking[3], None)
 
     def start_interested(self):
         self.peer_interested = 1
@@ -145,9 +147,8 @@ class Peer:
     def receive_piece(self, data):
         print(f'{self.ip} sent a piece.')
 
-        if self.seeking[0] > 1:
-            self.seeking[6]((self.ip, self.seeking[1], self.seeking[2], self.seeking[3], data))
-            self.seeking = (0, 0, 0, 0, lambda x: 0, lambda x: 0, lambda x: 0)
+        if self.seeking[0] == 'waiting':
+            self.seeking = ('complete', self.seeking[1], self.seeking[2], self.seeking[3], data)
 
     def cancel_request(self, data):
         print(f'{self.ip} cancelled.')
@@ -160,30 +161,37 @@ class Peer:
 
         time.sleep(0.05)
 
-    def get(self, index, begin, length, has_callback=lambda x: 0, getting_callback=lambda x: 0, got_callback=lambda x: 0):
-        if not(self.seeking[0]):
-            if self.has & (0b1 << index):
-                has_callback((self.ip, index, begin, length))
+    def status(self):
+        return self.seeking
 
+    def clear(self):
+        self.seeking = ('idle', 0, 0, 0, None)
+
+    def get(self, index, begin, length):
+        if self.seeking[0] == 'idle':
+            if self.has & (0b1 << index):
                 if self.send(messages.pack_interested()):
                     self.am_interested = 1
-                    self.seeking = (1, index, begin, length, has_callback, getting_callback, got_callback)
+                    print(f'interested in piece {self.seeking[1]}:{self.seeking[2]}:{self.seeking[3]} from {self.ip}.')
 
-                    print(f'interested in {self.ip}.')
+                    self.seeking = ('interested', index, begin, length, None)
 
                     if not(self.peer_choking):
                         if self.send(messages.pack_request(index, begin, length)):
-                            print(
-                                f'requested piece {self.seeking[1]} from {self.ip}.')
+                            print(f'requested piece {self.seeking[1]}:{self.seeking[2]}:{self.seeking[3]} from {self.ip}.')
 
-                            getting_callback((self.ip, index, begin, length))
+                            self.seeking = ('waiting', index, begin, length, None)
 
-                            self.seeking = (2, index, begin, length, has_callback, getting_callback, got_callback)
+                        else:
+                            return False
 
-    def cancel(self, index, begin, length):
-        if self.seeking[1] == index and self.seeking[2] == begin and self.seeking[3] == length:
-            if self.seeking[0] > 0:
-                self.send(messages.pack_uninterested())
+                    return True
 
-                if self.seeking[0] > 1:
-                    self.send(messages.pack_cancel(self.seeking[1], self.seeking[2], self.seeking[3]))
+                else:
+                    return False
+
+            else:
+                return False
+
+        else:
+            return False
