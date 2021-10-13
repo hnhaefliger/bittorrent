@@ -169,6 +169,7 @@ class Peer:
     def receive_piece(self, data):
         if self.am_interested and self.piece != None:
             print(f'recieved part of piece {self.piece.index} from {self.ip}')
+
             self.piece.add(data)
 
             if self.piece.complete:
