@@ -10,6 +10,10 @@ class File:
         self.pieces = [Piece(i, self.piece_length, piece, ) for i, piece in enumerate(pieces)]
 
         self.name = data['info']['name']
+
+        with open(self.name, 'w+') as f:
+            pass
+
         self.completed = 0
 
         if 'length' in data['info']:
@@ -25,6 +29,19 @@ class File:
 
     
     def update(self):
+        remove = []
+
         for piece in self.pieces:
-            if not(piece.assigned):
+            if piece.verified:
+                with open(self.name, 'r+b') as f:
+                    f.seek(piece.index * self.piece_length)
+                    f.write(piece.verified)
+
+                self.completed += 1
+                remove.append(piece)
+            
+            elif not(piece.assigned):
                 self.swarm.get(piece)
+
+        for piece in remove:
+            self.pieces.remove(piece)
